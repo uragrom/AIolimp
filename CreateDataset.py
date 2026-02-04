@@ -1,30 +1,36 @@
-import pandas as pd, re, nltk
+import pandas as pd, glob, re
+from bs4 import BeautifulSoup
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cluster import KMeans
-from nltk.corpus import stopwords
 
-train, test = pd.read_csv('dataset.csv'), pd.read_csv('dataset.csv')
+# 1. Сбор данных
+data = []
+for f in glob.glob('train/**/*.html', recursive=True):
+    html = open(f, encoding='utf-8').read()
+    text = BeautifulSoup(html, 'html.parser').get_text(separator=' ', strip=True)
+    data.append({'file': f, 'raw_text': text})
 
-try:
-    nltk.download('stopwords')
-    stop_words_list = list(stopwords.words('russian')) + list(stopwords.words('english'))
-except:
-    stop_words_list = 'english'
+df = pd.DataFrame(data)
 
-get_col = lambda df, k: [c for c in df.columns if k in c.lower()][0]
-def clean(t): return re.sub(r'\s+', ' ', re.sub(r'[^a-zа-я\s]', ' ', str(t).lower())).strip()
+# 2. Очистка
+df['clean'] = df['raw_text'].str.lower().apply(lambda x: re.sub(r'[^a-zа-я\s]', ' ', str(x)))
 
-for df in [train, test]:
-    t, a = get_col(df, 'title'), get_col(df, 'abstract')
-    df['clean'] = (df[t].fillna('') + " " + df[a].fillna('')).apply(clean)
+# 3. Кластеризация
+vec = TfidfVectorizer(max_features=2000, stop_words='english')
+X = vec.fit_transform(df['clean'])
 
-vec = TfidfVectorizer(max_features=2000, stop_words=stop_words_list)
-X_train = vec.fit_transform(train['clean'])
-X_test = vec.transform(test['clean'])
+model_kmeans = KMeans(n_clusters=7, random_state=42, n_init='auto')
+df['target_cluster'] = model_kmeans.fit_predict(X)
 
-model = KMeans(n_clusters=7, random_state=42, n_init='auto')
-train['target_cluster'] = model.fit_predict(X_train)
+# ВЫВОД ТОП-СЛОВ (Для интерпретации в отчете)
+print("\n--- ТОП-СЛОВА ПО КЛАСТЕРАМ ---")
+order_centroids = model_kmeans.cluster_centers_.argsort()[:, ::-1]
+terms = vec.get_feature_names_out()
 
-train.to_csv('processed_train.csv', index=False)
-test.to_csv('processed_test.csv', index=False)
-print("Готово! Данные очищены, стоп-слова RU+EN применены, кластеры созданы.")
+for i in range(7):
+    top_words = [terms[ind] for ind in order_centroids[i, :5]]
+    print(f"Кластер {i}: {', '.join(top_words)}")
+
+# 4. Сохранение
+df.to_csv('processed_train.csv', index=False)
+print("\nDataSet готов для Модуля Б!")
