@@ -1,36 +1,32 @@
-import pandas as pd, glob, re
+import pandas as pd, glob, re, joblib, nltk
 from bs4 import BeautifulSoup
+from nltk.corpus import stopwords
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cluster import KMeans
+from sklearn.neural_network import MLPClassifier
 
-# 1. Сбор данных
 data = []
 for f in glob.glob('train/**/*.html', recursive=True):
-    html = open(f, encoding='utf-8').read()
-    text = BeautifulSoup(html, 'html.parser').get_text(separator=' ', strip=True)
-    data.append({'file': f, 'raw_text': text})
+    with open(f, encoding='utf-8', errors='ignore') as file:
+        txt = BeautifulSoup(file.read(), 'html.parser').get_text()
+    data.append(re.sub(r'[^a-zа-яё\s]', ' ', txt.lower()))
 
-df = pd.DataFrame(data)
+stop_words_list = stopwords.words('english') + stopwords.words('russian')
 
-# 2. Очистка
-df['clean'] = df['raw_text'].str.lower().apply(lambda x: re.sub(r'[^a-zа-я\s]', ' ', str(x)))
 
-# 3. Кластеризация
-vec = TfidfVectorizer(max_features=2000, stop_words='english')
-X = vec.fit_transform(df['clean'])
+vec = TfidfVectorizer(max_features=1000, stop_words=stop_words_list)
+X = vec.fit_transform(data)
+labels = KMeans(n_clusters=7, random_state=42, n_init='auto').fit_predict(X)
 
-model_kmeans = KMeans(n_clusters=7, random_state=42, n_init='auto')
-df['target_cluster'] = model_kmeans.fit_predict(X)
+model = MLPClassifier(
+    hidden_layer_sizes=(256, 128),
+    max_iter=100,
+    verbose=True,
+    early_stopping=False,
+    random_state=42
+)
+model.fit(X, labels)
 
-# ВЫВОД ТОП-СЛОВ (Для интерпретации в отчете)
-print("\n--- ТОП-СЛОВА ПО КЛАСТЕРАМ ---")
-order_centroids = model_kmeans.cluster_centers_.argsort()[:, ::-1]
-terms = vec.get_feature_names_out()
-
-for i in range(7):
-    top_words = [terms[ind] for ind in order_centroids[i, :5]]
-    print(f"Кластер {i}: {', '.join(top_words)}")
-
-# 4. Сохранение
-df.to_csv('processed_train.csv', index=False)
-print("\nDataSet готов для Модуля Б!")
+joblib.dump(model, 'model.pkl')
+joblib.dump(vec, 'vec.pkl')
+print("Готово!")
